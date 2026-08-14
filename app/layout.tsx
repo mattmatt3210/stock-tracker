@@ -18,9 +18,9 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: '每日股市看板 · 美股 / 港股',
+  title: 'Hermes 動能掃描看板',
   description:
-    '每日排程自動抓取美股與港股收盤資料，提供自選股報價、收盤走勢圖、漲跌排行與排程執行狀態。',
+    'Hermes Agent 每日美股收市動能掃描報告看板：A 級 Setup 樞紐追蹤、現倉損益、核心／擴展股池 Stage 2 覆核，並疊加即時報價計算距樞紐距離。',
   generator: 'v0.app',
   icons: {
     icon: [
@@ -41,6 +41,7 @@ export const metadata: Metadata = {
   },
 }
 
+// 交易終端配色為深色專用，不提供淺色主題
 export const viewport: Viewport = {
   colorScheme: 'dark',
   themeColor: '#12161f',

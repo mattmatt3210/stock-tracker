@@ -17,13 +17,22 @@ const STATUS_STYLE: Record<PivotStatus, { badge: string; rail: string }> = {
   unknown: { badge: "bg-muted text-muted-foreground border-transparent", rail: "bg-border" },
 }
 
-/** 現價在 止蝕 → 樞紐 區間的位置，用來畫距離軌 */
+/** 樞紐在軌上的固定位置；留 1/3 空間給衝過樞紐的情況 */
+const PIVOT_ANCHOR = 66.7
+
+/**
+ * 距離軌採固定刻度：止蝕 = 0%、樞紐 = PIVOT_ANCHOR%。
+ * 刻度不隨現價浮動，否則現價高於樞紐時 high 會被現價撐大，
+ * marker 永遠貼在 100%（回調型 setup 尤其明顯）。
+ */
 function railPosition(setup: SetupWithLive): number | null {
   const { quote, pivot, stopLoss } = setup
   if (!quote || pivot === null) return null
-  const low = stopLoss !== null ? Math.min(stopLoss, pivot) : pivot * 0.9
-  const high = Math.max(pivot, quote.price, low + 0.01)
-  return Math.min(100, Math.max(0, ((quote.price - low) / (high - low)) * 100))
+  const low = stopLoss !== null && stopLoss < pivot ? stopLoss : pivot * 0.9
+  const span = pivot - low
+  if (span <= 0) return null
+  const pct = ((quote.price - low) / span) * PIVOT_ANCHOR
+  return Math.min(100, Math.max(0, pct))
 }
 
 export function SetupCard({ setup }: { setup: SetupWithLive }) {
@@ -114,15 +123,26 @@ export function SetupCard({ setup }: { setup: SetupWithLive }) {
                 className={cn("absolute inset-y-0 left-0 rounded-full", style.rail)}
                 style={{ width: `${pos}%` }}
               />
+              {/* 樞紐固定參考線 */}
+              <span
+                aria-hidden
+                className="absolute -inset-y-1 w-px bg-foreground/45"
+                style={{ left: `${PIVOT_ANCHOR}%` }}
+              />
               <span
                 aria-hidden
                 className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-foreground"
                 style={{ left: `${pos}%` }}
               />
             </div>
-            <div className="flex justify-between font-mono text-[10px] text-muted-foreground">
+            <div className="relative font-mono text-[10px] text-muted-foreground">
               <span>止蝕 {setup.stopLoss !== null ? formatPrice(setup.stopLoss) : "—"}</span>
-              <span>樞紐 {setup.pivot !== null ? formatPrice(setup.pivot) : "—"}</span>
+              <span
+                className="absolute -translate-x-1/2 whitespace-nowrap"
+                style={{ left: `${PIVOT_ANCHOR}%` }}
+              >
+                樞紐 {setup.pivot !== null ? formatPrice(setup.pivot) : "—"}
+              </span>
             </div>
           </div>
         )}
