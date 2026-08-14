@@ -10,26 +10,22 @@ export const dynamic = "force-dynamic"
  *   text/plain          → 整個 body 就是報告文字
  *   application/json    → { "text": "..." } 或 { "report": "..." } 或 { "message": "..." }
  *
- * 驗證：header `x-webhook-secret` 或 `Authorization: Bearer <secret>`
- * 需與環境變數 REPORT_WEBHOOK_SECRET 相符。
+ * 驗證：若已設定環境變數 REPORT_WEBHOOK_SECRET，則要求 header
+ * `x-webhook-secret` 或 `Authorization: Bearer <secret>` 相符。
+ * 未設定時端點開放（方便先接上），回應會帶 unprotected 旗標提醒。
  */
 export async function POST(request: Request) {
   const secret = process.env.REPORT_WEBHOOK_SECRET
 
-  if (!secret) {
-    return NextResponse.json(
-      { ok: false, error: "伺服器未設定 REPORT_WEBHOOK_SECRET，拒絕寫入" },
-      { status: 503 },
-    )
-  }
+  if (secret) {
+    const provided =
+      request.headers.get("x-webhook-secret") ??
+      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
+      ""
 
-  const provided =
-    request.headers.get("x-webhook-secret") ??
-    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-    ""
-
-  if (provided !== secret) {
-    return NextResponse.json({ ok: false, error: "密鑰不符" }, { status: 401 })
+    if (provided !== secret) {
+      return NextResponse.json({ ok: false, error: "密鑰不符" }, { status: 401 })
+    }
   }
 
   let text = ""
@@ -58,6 +54,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       duplicate,
+      unprotected: !secret || undefined,
       id: report.id,
       reportDate: report.reportDate,
       parsed: {

@@ -4,7 +4,14 @@ import { revalidatePath } from "next/cache"
 import { saveReport } from "@/lib/reports"
 
 export type SubmitResult =
-  | { ok: true; id: number; reportDate: string; duplicate: boolean; setups: number }
+  | {
+      ok: true
+      id: number
+      reportDate: string
+      duplicate: boolean
+      setups: number
+      positions: number
+    }
   | { ok: false; error: string }
 
 /** 手動貼上報告（backfill 或測試用） */
@@ -22,6 +29,7 @@ export async function submitReport(rawText: string): Promise<SubmitResult> {
       reportDate: report.reportDate,
       duplicate,
       setups: report.parsed.setups.length,
+      positions: report.parsed.positions.length,
     }
   } catch (error) {
     console.log("[v0] 手動儲存報告失敗:", error)

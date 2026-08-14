@@ -11,8 +11,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
-import type { StockQuote } from "@/lib/stocks"
 import { currencySymbol, formatPercent, formatPrice, formatShortDate } from "@/lib/format"
+import type { QuoteMap } from "@/lib/stocks"
 import { cn } from "@/lib/utils"
 
 const RANGES = [
@@ -21,47 +21,84 @@ const RANGES = [
   { key: "6m", label: "6 個月", days: 400 },
 ] as const
 
-export function TrendChart({ quote }: { quote: StockQuote }) {
+export type ChartTarget = {
+  /** Yahoo 代碼 */
+  symbol: string
+  /** 報告裡的原始代碼，用於顯示 */
+  label: string
+  pivot: number | null
+  stopLoss: number | null
+}
+
+type Props = {
+  targets: ChartTarget[]
+  quotes: QuoteMap
+}
+
+export function TrendChart({ targets, quotes }: Props) {
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("3m")
+  const [symbol, setSymbol] = useState<string>(targets[0]?.symbol ?? "")
 
+  const target = targets.find((t) => t.symbol === symbol) ?? targets[0]
+  const quote = target ? quotes[target.symbol] : undefined
   const active = RANGES.find((item) => item.key === range) ?? RANGES[1]
-  const data = useMemo(() => quote.history.slice(-active.days), [quote.history, active.days])
 
-  const first = data[0]?.close ?? quote.price
-  const last = data.at(-1)?.close ?? quote.price
+  const data = useMemo(
+    () => (quote ? quote.history.slice(-active.days) : []),
+    [quote, active.days],
+  )
+
+  if (!target || !quote || data.length < 2) {
+    return (
+      <section className="flex flex-col gap-2 rounded-lg border border-border bg-card p-5">
+        <h2 className="text-sm font-semibold tracking-wide text-muted-foreground">收盤走勢</h2>
+        <p className="text-sm text-muted-foreground">目前沒有足夠的歷史資料可畫圖。</p>
+      </section>
+    )
+  }
+
+  const first = data[0].close
+  const last = data.at(-1)!.close
   const periodChange = first ? ((last - first) / first) * 100 : 0
   const rising = periodChange >= 0
   const stroke = rising ? "var(--up)" : "var(--down)"
+  const sym = currencySymbol(quote.currency)
 
-  const closes = data.map((point) => point.close)
-  const min = Math.min(...closes)
-  const max = Math.max(...closes)
+  // 讓 pivot / 止蝕線也納入 Y 軸範圍，否則參考線會被裁掉
+  const values = [...data.map((d) => d.close), target.pivot, target.stopLoss].filter(
+    (v): v is number => typeof v === "number",
+  )
+  const min = Math.min(...values)
+  const max = Math.max(...values)
   const pad = (max - min) * 0.12 || max * 0.02
 
   return (
     <section className="flex flex-col gap-4 rounded-lg border border-border bg-card p-5">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <div className="flex items-baseline gap-2">
-            <h2 className="font-mono text-base text-foreground">{quote.symbol}</h2>
-            <span className="text-sm text-muted-foreground">{quote.label}</span>
-          </div>
+          <h2 className="text-sm font-semibold tracking-wide text-muted-foreground">收盤走勢</h2>
           <p className="text-xs text-muted-foreground">
-            {quote.name} · {quote.exchange} · 每日收盤價
+            {quote.name} · {quote.exchange}
           </p>
         </div>
 
         <div className="flex items-center gap-4">
           <div className="text-right">
-            <div className="font-mono text-xl leading-none text-foreground">
-              {currencySymbol(quote.currency)}
+            <div className="font-mono text-xl leading-none tabular-nums">
+              {sym}
               {formatPrice(last)}
             </div>
-            <div className={cn("mt-1 font-mono text-xs", rising ? "text-up" : "text-down")}>
+            <div
+              className={cn("mt-1 font-mono text-xs tabular-nums", rising ? "text-up" : "text-down")}
+            >
               區間 {formatPercent(periodChange)}
             </div>
           </div>
-          <div className="flex overflow-hidden rounded-sm border border-border" role="group" aria-label="時間範圍">
+          <div
+            className="flex overflow-hidden rounded-sm border border-border"
+            role="group"
+            aria-label="時間範圍"
+          >
             {RANGES.map((item) => (
               <button
                 key={item.key}
@@ -71,7 +108,7 @@ export function TrendChart({ quote }: { quote: StockQuote }) {
                 className={cn(
                   "px-2.5 py-1 text-[11px] transition-colors",
                   range === item.key
-                    ? "bg-primary text-primary-foreground"
+                    ? "bg-foreground text-background"
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
@@ -81,6 +118,26 @@ export function TrendChart({ quote }: { quote: StockQuote }) {
           </div>
         </div>
       </header>
+
+      {/* 代碼切換 */}
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="選擇股票">
+        {targets.map((t) => (
+          <button
+            key={t.symbol}
+            type="button"
+            onClick={() => setSymbol(t.symbol)}
+            aria-pressed={t.symbol === target.symbol}
+            className={cn(
+              "rounded border px-2 py-1 font-mono text-[11px] transition-colors",
+              t.symbol === target.symbol
+                ? "border-foreground bg-foreground text-background"
+                : "border-border text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
       <div className="h-72 w-full">
         <ResponsiveContainer width="100%" height="100%">
@@ -108,7 +165,32 @@ export function TrendChart({ quote }: { quote: StockQuote }) {
               axisLine={false}
               width={64}
             />
-            <ReferenceLine y={first} stroke="var(--muted-foreground)" strokeDasharray="3 3" />
+            {target.pivot !== null && (
+              <ReferenceLine
+                y={target.pivot}
+                stroke="var(--trigger)"
+                strokeDasharray="4 3"
+                label={{
+                  value: `樞紐 ${formatPrice(target.pivot)}`,
+                  position: "insideTopLeft",
+                  fill: "var(--trigger)",
+                  fontSize: 10,
+                }}
+              />
+            )}
+            {target.stopLoss !== null && (
+              <ReferenceLine
+                y={target.stopLoss}
+                stroke="var(--down)"
+                strokeDasharray="4 3"
+                label={{
+                  value: `止蝕 ${formatPrice(target.stopLoss)}`,
+                  position: "insideBottomLeft",
+                  fill: "var(--down)",
+                  fontSize: 10,
+                }}
+              />
+            )}
             <Tooltip
               cursor={{ stroke: "var(--muted-foreground)", strokeDasharray: "3 3" }}
               contentStyle={{
@@ -119,10 +201,7 @@ export function TrendChart({ quote }: { quote: StockQuote }) {
               }}
               labelStyle={{ color: "var(--muted-foreground)", marginBottom: 4 }}
               itemStyle={{ color: "var(--foreground)", fontFamily: "var(--font-mono)" }}
-              formatter={(value: number) => [
-                `${currencySymbol(quote.currency)}${formatPrice(value)}`,
-                "收盤",
-              ]}
+              formatter={(value) => [`${sym}${formatPrice(Number(value))}`, "收盤"]}
             />
             <Area
               type="monotone"
