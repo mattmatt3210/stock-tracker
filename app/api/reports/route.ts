@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { listReports, saveReport } from "@/lib/reports"
+import { listReports, ReportValidationError, saveReport } from "@/lib/reports"
 
 export const dynamic = "force-dynamic"
 
@@ -65,6 +65,9 @@ export async function POST(request: Request) {
       },
     })
   } catch (error) {
+    if (error instanceof ReportValidationError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 422 })
+    }
     console.log("[v0] webhook 儲存失敗:", error)
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "儲存失敗" },

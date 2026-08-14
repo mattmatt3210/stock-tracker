@@ -419,6 +419,47 @@ function parseRequests(section: RawSection | null): {
 }
 
 /* ------------------------------------------------------------------ */
+/* 內容驗證                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 判斷解析結果是否真的像一份 Hermes 掃描報告。
+ * 解析器對格式很寬容，若不擋一下，隨便一段文字都會變成
+ * 「0 setup、0 持倉」的空報告寫進資料庫，還會蓋掉真實的最新報告。
+ */
+export function validateReport(
+  parsed: ParsedReport,
+  rawText: string,
+): { ok: true } | { ok: false; reason: string } {
+  if (rawText.trim().length < 80) {
+    return { ok: false, reason: "內容過短，不像一份掃描報告" }
+  }
+
+  // 至少要辨識出一個有內容的已知區塊
+  const filledSections = [
+    parsed.market.indices.length > 0 || parsed.market.verdict !== null,
+    parsed.positions.length > 0,
+    parsed.corePool.length > 0,
+    parsed.extendedPool.length > 0,
+    parsed.setups.length > 0,
+    parsed.requests.length > 0 || parsed.orderCommands.length > 0,
+  ].filter(Boolean).length
+
+  if (filledSections === 0) {
+    return {
+      ok: false,
+      reason: "無法辨識任何報告區塊（大市／現倉／股池／Setup／請示），請確認貼上的是完整報告原文",
+    }
+  }
+
+  if (!parsed.reportDate) {
+    return { ok: false, reason: "找不到報告日期，無法歸檔" }
+  }
+
+  return { ok: true }
+}
+
+/* ------------------------------------------------------------------ */
 /* 主解析函式                                                          */
 /* ------------------------------------------------------------------ */
 

@@ -2,8 +2,16 @@ import { createHash } from "node:crypto"
 import { desc, eq } from "drizzle-orm"
 import { db } from "./db"
 import { reports, type ReportRow } from "./db/schema"
-import { parseReport } from "./report-parser"
+import { parseReport, validateReport } from "./report-parser"
 import type { ParsedReport } from "./report-types"
+
+/** 內容不像報告（相對於資料庫等系統錯誤），對應 HTTP 422 */
+export class ReportValidationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ReportValidationError"
+  }
+}
 
 export interface StoredReport {
   id: number
@@ -49,10 +57,14 @@ export async function saveReport(
   if (!text) throw new Error("報告內容為空")
 
   const parsed = parseReport(text)
-  const contentHash = createHash("sha256").update(text).digest("hex")
 
-  // 報告沒寫日期時，退回今天（以 UTC 日期為準）
-  const reportDate = parsed.reportDate ?? new Date().toISOString().slice(0, 10)
+  // 擋掉不像報告的內容，否則會存成空報告並蓋掉真正的最新一份
+  const valid = validateReport(parsed, text)
+  if (!valid.ok) throw new ReportValidationError(valid.reason)
+
+  const contentHash = createHash("sha256").update(text).digest("hex")
+  // validateReport 已確保 reportDate 存在
+  const reportDate = parsed.reportDate as string
 
   const inserted = await db
     .insert(reports)
