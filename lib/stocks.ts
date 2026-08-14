@@ -1,5 +1,3 @@
-import { WATCHLIST, type Market, type WatchlistItem } from "@/lib/watchlist"
-
 export type HistoryPoint = {
   /** YYYY-MM-DD */
   date: string
@@ -7,10 +5,9 @@ export type HistoryPoint = {
 }
 
 export type StockQuote = {
+  /** Yahoo 代碼，例如 NVDA / 1888.HK */
   symbol: string
-  label: string
   name: string
-  market: Market
   currency: string
   price: number
   previousClose: number
@@ -27,11 +24,13 @@ export type StockQuote = {
   history: HistoryPoint[]
 }
 
-export type Snapshot = {
-  /** 這份資料被抓取的時間（ISO） */
+export type QuoteMap = Record<string, StockQuote>
+
+export type QuoteSnapshot = {
+  /** 這份即時報價被抓取的時間（ISO） */
   fetchedAt: string
   source: string
-  quotes: StockQuote[]
+  quotes: QuoteMap
   failures: { symbol: string; reason: string }[]
 }
 
@@ -39,33 +38,30 @@ export type Snapshot = {
 const RANGE = "6mo"
 
 function toDateKey(seconds: number, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
+  return new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   }).format(new Date(seconds * 1000))
-  return parts
 }
 
-async function fetchOne(item: WatchlistItem, revalidate: number | false): Promise<StockQuote> {
+async function fetchOne(symbol: string, revalidate: number | false): Promise<StockQuote> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-    item.symbol,
+    symbol,
   )}?range=${RANGE}&interval=1d&includePrePost=false`
 
   const res = await fetch(url, {
     headers: {
       // Yahoo 對沒有 UA 的請求會擋掉
-      "User-Agent": "Mozilla/5.0 (compatible; StockDashboard/1.0)",
+      "User-Agent": "Mozilla/5.0 (compatible; HermesDashboard/1.0)",
       Accept: "application/json",
     },
     cache: revalidate === false ? "no-store" : undefined,
     next: revalidate === false ? undefined : { revalidate },
   })
 
-  if (!res.ok) {
-    throw new Error(`Yahoo 回應 ${res.status}`)
-  }
+  if (!res.ok) throw new Error(`Yahoo 回應 ${res.status}`)
 
   const json = await res.json()
   const result = json?.chart?.result?.[0]
@@ -86,17 +82,14 @@ async function fetchOne(item: WatchlistItem, revalidate: number | false): Promis
   }
 
   const price: number = meta.regularMarketPrice ?? history.at(-1)?.close ?? 0
-  // 以前一根日線收盤作為比較基準，若無則退回 chartPreviousClose
   const previousClose: number =
     (history.length > 1 && history.at(-2)!.close) || meta.chartPreviousClose || price
   const change = price - previousClose
 
   return {
-    symbol: item.symbol,
-    label: item.label,
-    name: meta.longName ?? meta.shortName ?? item.label,
-    market: item.market,
-    currency: meta.currency ?? (item.market === "HK" ? "HKD" : "USD"),
+    symbol,
+    name: meta.longName ?? meta.shortName ?? symbol,
+    currency: meta.currency ?? (symbol.endsWith(".HK") ? "HKD" : "USD"),
     price,
     previousClose,
     change,
@@ -113,21 +106,26 @@ async function fetchOne(item: WatchlistItem, revalidate: number | false): Promis
 }
 
 /**
- * 抓取整份追蹤清單的快照。
- * @param revalidate 秒數；傳 false 代表完全不使用快取（cron 用）。
+ * 抓取指定代碼的即時報價。
+ * 單一代碼失敗不會影響其他代碼（例如報告裡已除牌的 SPCX）。
+ * @param revalidate 秒數；傳 false 代表不使用快取。
  */
-export async function getSnapshot(revalidate: number | false = 300): Promise<Snapshot> {
-  const settled = await Promise.allSettled(WATCHLIST.map((item) => fetchOne(item, revalidate)))
+export async function getQuotes(
+  symbols: string[],
+  revalidate: number | false = 180,
+): Promise<QuoteSnapshot> {
+  const unique = [...new Set(symbols.filter(Boolean))]
+  const settled = await Promise.allSettled(unique.map((s) => fetchOne(s, revalidate)))
 
-  const quotes: StockQuote[] = []
-  const failures: Snapshot["failures"] = []
+  const quotes: QuoteMap = {}
+  const failures: QuoteSnapshot["failures"] = []
 
-  settled.forEach((entry, index) => {
+  settled.forEach((entry, i) => {
     if (entry.status === "fulfilled") {
-      quotes.push(entry.value)
+      quotes[unique[i]] = entry.value
     } else {
       failures.push({
-        symbol: WATCHLIST[index].symbol,
+        symbol: unique[i],
         reason: entry.reason instanceof Error ? entry.reason.message : String(entry.reason),
       })
     }
