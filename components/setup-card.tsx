@@ -17,6 +17,16 @@ const STATUS_STYLE: Record<PivotStatus, { badge: string; rail: string }> = {
   unknown: { badge: "bg-muted text-muted-foreground border-transparent", rail: "bg-border" },
 }
 
+/**
+ * setup 等級標籤。A 級不標（是預設狀態），
+ * 觀望與 watchlist 一定要標出來，否則會被誤當成可立即執行。
+ */
+const TIER_LABEL: Record<string, { text: string; className: string } | undefined> = {
+  a: undefined,
+  watch: { text: "觀望", className: "border-warn/50 text-warn" },
+  monitor: { text: "僅監察", className: "border-border text-muted-foreground" },
+}
+
 /** 樞紐在軌上的固定位置；留 1/3 空間給衝過樞紐的情況 */
 const PIVOT_ANCHOR = 66.7
 
@@ -42,6 +52,7 @@ export function SetupCard({ setup }: { setup: SetupWithLive }) {
   const isHK = /^HK\./i.test(setup.rawTicker) || setup.yahooSymbol?.endsWith(".HK")
   const sym = currencySymbol(setup.quote?.currency ?? (isHK ? "HKD" : "USD"))
   const pos = railPosition(setup)
+  const tierLabel = TIER_LABEL[setup.tier]
 
   async function copyCommand() {
     if (!setup.orderCommand) return
@@ -68,6 +79,11 @@ export function SetupCard({ setup }: { setup: SetupWithLive }) {
             <Badge variant="outline" className="font-mono text-[10px]">
               {isHK ? "HK" : "US"}
             </Badge>
+            {tierLabel && (
+              <Badge variant="outline" className={cn("text-[10px]", tierLabel.className)}>
+                {tierLabel.text}
+              </Badge>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">{setup.name}</p>
         </div>

@@ -353,6 +353,8 @@ function parseSetups(section: RawSection | null): { setups: Setup[]; notice: str
         rawTicker,
         yahooSymbol: toYahooSymbol(rawTicker),
         name: clean(head[3] ?? ""),
+        // regex 解析器只認得 A 級 setup 段落，分不出觀望名單
+        tier: "a",
         condition,
         direction: directionOf(condition),
         pivot: null,
@@ -458,7 +460,7 @@ export function validateReport(rawText: string): { ok: true } | { ok: false; rea
     /\b\d{4,5}\b/.test(text) ||
     /\b[A-Z]{2,5}\b/.test(text)
 
-  // 報告一定會有價格或百分比數字
+  // 報告一定會有價格或百分��數字
   const hasNumbers = /\d+\.\d+/.test(text) || /[+\-]?\d+(\.\d+)?\s*%/.test(text)
 
   // 報告一定會出現至少一個領域關鍵詞

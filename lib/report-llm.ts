@@ -82,6 +82,11 @@ const extractionSchema = z.object({
         rank: z.number().describe("排序，從 1 開始"),
         rawTicker: z.string(),
         name: z.string().describe("股票名稱，沒寫則空字串"),
+        tier: z
+          .enum(["a", "watch", "monitor"])
+          .describe(
+            "a = 報告標為 A 級／可立即執行；watch = 建議觀望名單，有明確進場價等突破確認；monitor = 只作 watchlist、無進場價",
+          ),
         condition: z.string().describe("進場條件原文，如「等回測 50MA」「突破 20 日高」"),
         direction: z
           .enum(["breakout", "pullback"])
@@ -100,7 +105,9 @@ const extractionSchema = z.object({
           .describe("報告要求回覆的落單指令原文，如「落 LITE」「落 TSM」，沒有則 null"),
       }),
     )
-    .describe("A 級 setup／建議觀望名單。報告明說今日無 setup 時回空陣列"),
+    .describe(
+      "所有帶進場價的可執行候選，包含 A 級 setup 與建議觀望名單。只有連候選都沒有時才回空陣列",
+    ),
 
   setupNotice: z.string().nullable().describe("關於 setup 的整體說明，如「今日無 A 級 setup」"),
   requests: z.array(z.string()).describe("請示事項／需要用戶決定的問題"),
@@ -120,7 +127,14 @@ const SYSTEM_PROMPT = `你是一個金融報告結構化抽取器。輸入是 He
 2. 代碼保留報告原文（US.NVDA、HK.01888、01888、NVDA 都照原樣填入 rawTicker）。不要自行轉換格式。
 3. direction 欄位最關鍵：分清楚「等回測／回調／跌到某價才買」是 pullback，
    「等突破／升穿／突破即落」是 breakout。這決定系統如何計算距進場價的距離，錯了會誤導交易判斷。
-4. 報告明確說「今日無 A 級 setup」「繼續觀望」時，setups 回空陣列，並把該句放進 setupNotice。
+4. setups 要收錄「所有帶進場價的可執行候選」，不限於 A 級：
+   - 報告說「今日無 A 級 setup」但下面列了「建議觀望名單」「等 breakout 確認」等有
+     明確進場價的候選（例如「① PLTR @184 … 突破即落 700 股，止蝕 169.28」），
+     這些一律要收進 setups，並把 tier 標成 "watch"。
+   - 只有連候選都沒有時，setups 才回空陣列。
+   - 把「今日無 A 級 setup」這類整體結論放進 setupNotice（與 setups 並存不衝突）。
+   - 純粹叫你「只作 watchlist、唔主動落」而沒有進場價的，tier 填 "monitor"。
+   - 明確標為 A 級／可立即執行的，tier 填 "a"。
 5. 持倉、核心池、擴展池要分清楚。核心池／擴展池是「觀察名單覆核」，不是持倉。
 6. 百分比一律用數字（-6.3 而非 "-6.3%"）。跌／蝕用負數。
 7. 數字要去掉千分位逗號與貨幣符號（$1,035,264 -> 1035264）。`
@@ -176,6 +190,7 @@ function toParsedReport(x: Extraction, rawText: string): ParsedReport {
     setups: x.setups.map((s) => ({
       ...withSymbol(s),
       name: s.name ?? "",
+      tier: s.tier,
       condition: s.condition ?? "",
       direction: resolveDirection(s.condition, s.direction),
       rationale: s.rationale ?? "",

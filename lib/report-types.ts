@@ -3,6 +3,14 @@
 /** 買入方向：報告的「請示」段會寫明是等回測（≤ pivot）還是等突破（≥ pivot） */
 export type PivotDirection = "breakout" | "pullback"
 
+/**
+ * setup 的執行等級。
+ * a = 報告標為 A 級／可立即執行
+ * watch = 建議觀望名單，有明確進場價但要等突破確認
+ * monitor = 只作 watchlist，無進場價
+ */
+export type SetupTier = "a" | "watch" | "monitor"
+
 export interface MarketIndex {
   symbol: string
   close: number | null
@@ -57,6 +65,7 @@ export interface Setup {
   rawTicker: string
   yahooSymbol: string | null
   name: string
+  tier: SetupTier
   /** 例如「等回測 50MA」 */
   condition: string
   direction: PivotDirection
