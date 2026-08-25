@@ -1,7 +1,7 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
-import { saveReport } from "@/lib/reports"
+import { refineReport, saveReport } from "@/lib/reports"
 
 export type SubmitResult =
   | {
@@ -22,14 +22,20 @@ export async function submitReport(rawText: string): Promise<SubmitResult> {
 
   try {
     const { report, duplicate } = await saveReport(rawText, "manual")
+
+    // 手動貼上時使用者正在等結果，直接等 LLM 抽完再回報，
+    // 否則畫面會先閃一次 regex 的「0 個 setup」再跳動
+    const refined = duplicate ? null : await refineReport(report.id).catch(() => null)
+    const parsed = refined ?? report.parsed
+
     revalidatePath("/")
     return {
       ok: true,
       id: report.id,
-      reportDate: report.reportDate,
+      reportDate: parsed.reportDate ?? report.reportDate,
       duplicate,
-      setups: report.parsed.setups.length,
-      positions: report.parsed.positions.length,
+      setups: parsed.setups.length,
+      positions: parsed.positions.length,
     }
   } catch (error) {
     console.log("[v0] 手動儲存報告失敗:", error)

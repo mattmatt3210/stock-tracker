@@ -1,13 +1,19 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { AlertTriangle, RefreshCw, ShieldAlert } from "lucide-react"
+import { AlertTriangle, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { formatDateTime, formatRelative } from "@/lib/format"
 import type { StoredReport } from "@/lib/reports"
 import type { QuoteSnapshot } from "@/lib/stocks"
 import { cn } from "@/lib/utils"
+
+const PARSE_LABEL: Record<string, string> = {
+  llm: "LLM 抽取",
+  regex: "規則式（LLM 失敗）",
+  pending: "處理中…",
+}
 
 type Props = {
   report: StoredReport
@@ -71,7 +77,27 @@ export function ReportMeta({ report, quotes, webhookProtected, isValidating, onR
               : "未取得"
           }
         />
+        <Row label="解析方式" value={PARSE_LABEL[report.parseMethod] ?? report.parseMethod} />
       </dl>
+
+      {report.parseMethod === "regex" && (
+        <div className="flex gap-2 rounded-md border border-warn/40 bg-warn/10 p-3">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warn" aria-hidden />
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            LLM 抽取失敗，目前顯示的是規則式解析結果，可能有遺漏。
+            {report.parseError ? ` 原因：${report.parseError}` : ""}
+          </p>
+        </div>
+      )}
+
+      {report.parseMethod === "pending" && (
+        <div className="flex gap-2 rounded-md border border-border bg-muted/40 p-3">
+          <RefreshCw className="mt-0.5 size-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            報告已收到，正在用 LLM 抽取結構化內容，稍後重新整理即可看到完整結果。
+          </p>
+        </div>
+      )}
 
       {quotes && quotes.failures.length > 0 && (
         <div className="flex flex-col gap-1.5 rounded-md border border-warn/40 bg-warn/10 p-3">
@@ -89,7 +115,14 @@ export function ReportMeta({ report, quotes, webhookProtected, isValidating, onR
         </div>
       )}
 
-      {!webhookProtected && (
+      {webhookProtected ? (
+        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 p-3">
+          <ShieldCheck className="size-3.5 shrink-0 text-pos" aria-hidden />
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            Webhook 已啟用密鑰驗證，未帶正確密鑰的請求會被拒絕。
+          </p>
+        </div>
+      ) : (
         <div className="flex gap-2 rounded-md border border-border bg-muted/40 p-3">
           <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
           <p className="text-[11px] leading-relaxed text-muted-foreground">

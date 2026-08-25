@@ -128,7 +128,7 @@ export async function refineReport(id: number): Promise<ParsedReport | null> {
     })
     .where(eq(reports.id, id))
 
-  console.log(`[v0] 報告 ${id} 已用 ${method} 重新抽取（setup=${parsed.setups.length}）`)
+  return parsed
 }
 
 export async function getLatestReport(): Promise<StoredReport | null> {

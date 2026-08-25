@@ -131,7 +131,7 @@ function withSymbol<T extends { rawTicker: string }>(row: T) {
 }
 
 /**
- * 方向的保底推導：模型偶爾會把方向填反，
+ * 方向的保底推���：模型偶爾會把方向填反，
  * 條件文字裡的關鍵詞比模型判斷更可靠，故以文字為準覆寫。
  */
 function resolveDirection(condition: string, modelGuess: PivotDirection): PivotDirection {
@@ -204,31 +204,50 @@ export async function extractReport(
   text: string,
   opts: { model?: string; timeoutMs?: number } = {},
 ): Promise<ExtractResult> {
-  try {
-    const { output } = await generateText({
-      model: opts.model ?? MODEL,
-      system: SYSTEM_PROMPT,
-      prompt: `以下是今日的 Hermes 掃描報告原文，請抽取成結構化資料：\n\n${text}`,
-      // 抽取是機械性工作，不需要深度推理；低推理可省下大量延遲
-      reasoning: "low",
-      // 沒有超時的話，gateway 卡住會讓 webhook 無限期掛住
-      abortSignal: AbortSignal.timeout(opts.timeoutMs ?? 45_000),
-      output: Output.object({
-        name: "HermesReport",
-        description: "Hermes Agent 每日股票動能掃描報告的結構化內容",
-        schema: extractionSchema,
-      }),
-    })
+  // AI Gateway 免費層限流窗口約數十秒，SDK 內建重試間隔太短（幾秒內就用完），
+  // 所以自己做一層較長的退避，避免整份報告被迫退回 regex
+  const backoffMs = [0, 20_000, 45_000]
+  let lastReason = "未知錯誤"
 
-    return { parsed: toParsedReport(output, text), method: "llm" }
-  } catch (error) {
-    const reason = NoObjectGeneratedError.isInstance(error)
-      ? `模型輸出不符 schema: ${error.cause}`
-      : error instanceof Error
-        ? error.message
-        : "未知錯誤"
+  for (const [attempt, waitMs] of backoffMs.entries()) {
+    if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs))
 
-    console.log("[v0] LLM 抽取失敗，退回 regex 解析:", reason)
-    return { parsed: parseReport(text), method: "regex", error: reason }
+    try {
+      const { output } = await generateText({
+        model: opts.model ?? MODEL,
+        system: SYSTEM_PROMPT,
+        prompt: `以下是今日的 Hermes 掃描報告原文，請抽取成結構化資料：\n\n${text}`,
+        // 抽取是機械性工作，不需要深度推理；低推理可省下大量延遲
+        reasoning: "low",
+        // 沒有超時的話，gateway 卡住會讓背景任務無限期掛住
+        abortSignal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
+        // 限流交由外層退避處理，關掉 SDK 的快速重試
+        maxRetries: 0,
+        output: Output.object({
+          name: "HermesReport",
+          description: "Hermes Agent 每日股票動能掃描報告的結構化內容",
+          schema: extractionSchema,
+        }),
+      })
+
+      return { parsed: toParsedReport(output, text), method: "llm" }
+    } catch (error) {
+      lastReason = NoObjectGeneratedError.isInstance(error)
+        ? `模型輸出不符 schema: ${error.cause}`
+        : error instanceof Error
+          ? error.message
+          : "未知錯誤"
+
+      // schema 不符再試也不會變好，直接放棄
+      if (NoObjectGeneratedError.isInstance(error)) break
+
+      const isRateLimit = /rate.?limit|429|too many/i.test(lastReason)
+      if (!isRateLimit || attempt === backoffMs.length - 1) break
+
+      console.log(`[v0] LLM 抽取遇到限流，${backoffMs[attempt + 1] / 1000}s 後重試`)
+    }
   }
+
+  console.log("[v0] LLM 抽取失敗，退回 regex 解析:", lastReason)
+  return { parsed: parseReport(text), method: "regex", error: lastReason }
 }
