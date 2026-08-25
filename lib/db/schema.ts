@@ -12,6 +12,10 @@ export const reports = pgTable(
     source: text("source").notNull().default("webhook"),
     rawText: text("raw_text").notNull(),
     parsed: jsonb("parsed").$type<ParsedReport>().notNull(),
+    /** pending = 已收下但 LLM 尚未處理；llm = LLM 抽取；regex = LLM 失敗已退回 regex */
+    parseMethod: text("parse_method").notNull().default("pending"),
+    /** LLM 抽取失敗時的原因，成功則為 null */
+    parseError: text("parse_error"),
     /** 報告內容的 sha256，用來去重（webhook 重送不會產生重複列） */
     contentHash: text("content_hash").notNull(),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),

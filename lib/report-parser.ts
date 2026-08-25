@@ -439,37 +439,39 @@ function parseRequests(section: RawSection | null): {
 /* ------------------------------------------------------------------ */
 
 /**
- * 判斷解析結果是否真的像一份 Hermes 掃描報告。
- * 解析器對格式很寬容，若不擋一下，隨便一段文字都會變成
- * 「0 setup、0 持倉」的空報告寫進資料庫，還會蓋掉真實的最新報告。
+ * 判斷內容是否真的像一份 Hermes 掃描報告。
+ *
+ * 刻意只看「原文特徵」，不看解析結果。早期版本用 regex 解析出的區塊數量來判斷，
+ * 結果 Hermes 真實報告（廣東話散文、格式每天不同）regex 抓不到任何區塊，
+ * 反而被誤判為垃圾擋掉。原文特徵對格式變化免疫，才是安全的守門條件。
  */
-export function validateReport(
-  parsed: ParsedReport,
-  rawText: string,
-): { ok: true } | { ok: false; reason: string } {
-  if (rawText.trim().length < 80) {
+export function validateReport(rawText: string): { ok: true } | { ok: false; reason: string } {
+  const text = rawText.trim()
+
+  if (text.length < 120) {
     return { ok: false, reason: "內容過短，不像一份掃描報告" }
   }
 
-  // 至少要辨識出一個有內容的已知區塊
-  const filledSections = [
-    parsed.market.indices.length > 0 || parsed.market.verdict !== null,
-    parsed.positions.length > 0,
-    parsed.corePool.length > 0,
-    parsed.extendedPool.length > 0,
-    parsed.setups.length > 0,
-    parsed.requests.length > 0 || parsed.orderCommands.length > 0,
-  ].filter(Boolean).length
+  // 報告一定會提到股票代碼（US.NVDA / HK.01888 / 01888 / NVDA）
+  const hasTicker =
+    /\b(?:US|HK)\.[A-Z0-9]+/i.test(text) ||
+    /\b\d{4,5}\b/.test(text) ||
+    /\b[A-Z]{2,5}\b/.test(text)
 
-  if (filledSections === 0) {
+  // 報告一定會有價格或百分比數字
+  const hasNumbers = /\d+\.\d+/.test(text) || /[+\-]?\d+(\.\d+)?\s*%/.test(text)
+
+  // 報告一定會出現至少一個領域關鍵詞
+  const hasDomainWord =
+    /大市|持倉|現倉|核心|擴展|股池|setup|樞紐|止蝕|成本|收盤|收市|均線|Stage|掃描|觀望|請示|突破|回測/i.test(
+      text,
+    )
+
+  if (!hasTicker || !hasNumbers || !hasDomainWord) {
     return {
       ok: false,
-      reason: "無法辨識任何報告區塊（大市／現倉／股池／Setup／請示），請確認貼上的是完整報告原文",
+      reason: "內容不像股票掃描報告（缺少股票代碼、價格數字或相關關鍵詞）",
     }
-  }
-
-  if (!parsed.reportDate) {
-    return { ok: false, reason: "找不到報告日期，無法歸檔" }
   }
 
   return { ok: true }

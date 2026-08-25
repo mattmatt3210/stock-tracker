@@ -22,6 +22,9 @@ export interface StoredReport {
   receivedAt: string
   parsed: ParsedReport
   rawText: string
+  /** pending | llm | regex */
+  parseMethod: string
+  parseError: string | null
 }
 
 function toStored(row: ReportRow): StoredReport {
@@ -35,6 +38,8 @@ function toStored(row: ReportRow): StoredReport {
       row.receivedAt instanceof Date ? row.receivedAt.toISOString() : String(row.receivedAt),
     parsed: row.parsed,
     rawText: row.rawText,
+    parseMethod: row.parseMethod,
+    parseError: row.parseError,
   }
 }
 
@@ -56,15 +61,16 @@ export async function saveReport(
   const text = rawText.trim()
   if (!text) throw new Error("報告內容為空")
 
-  const parsed = parseReport(text)
-
-  // 擋掉不像報告的內容，否則會存成空報告並蓋掉真正的最新一份
-  const valid = validateReport(parsed, text)
+  // 擋掉不像報告的內容，否則會存成空報告並蓋掉真正的最新一份。
+  // 只看原文特徵，不看解析結果（regex 對真實報告常抓不到東西）
+  const valid = validateReport(text)
   if (!valid.ok) throw new ReportValidationError(valid.reason)
 
+  // 先用 regex 快速解析並立即入庫，讓 webhook 能馬上回應；
+  // LLM 抽取較慢（約 30 秒），改由背景任務補上（refineReport）
+  const parsed = parseReport(text)
   const contentHash = createHash("sha256").update(text).digest("hex")
-  // validateReport 已確保 reportDate 存在
-  const reportDate = parsed.reportDate as string
+  const reportDate = parsed.reportDate ?? new Date().toISOString().slice(0, 10)
 
   const inserted = await db
     .insert(reports)
@@ -76,6 +82,7 @@ export async function saveReport(
       rawText: text,
       parsed,
       contentHash,
+      parseMethod: "pending",
     })
     .onConflictDoNothing({ target: reports.contentHash })
     .returning()
@@ -92,6 +99,36 @@ export async function saveReport(
     .limit(1)
 
   return { report: toStored(existing[0]), duplicate: true }
+}
+
+/**
+ * 用 LLM 重新抽取指定報告並覆寫 parsed。
+ *
+ * 設計成獨立於 saveReport：LLM 約需 30 秒，若同步等待會讓 webhook 逾時，
+ * 所以入庫先用 regex 佔位，這裡在背景把資料升級成 LLM 版本。
+ * 失敗時保留 regex 結果並記錄原因，不讓整份報告消失。
+ */
+export async function refineReport(id: number): Promise<ParsedReport | null> {
+  const row = await getReportById(id)
+  if (!row) return null
+
+  const { extractReport } = await import("./report-llm")
+  const { parsed, method, error } = await extractReport(row.rawText)
+
+  await db
+    .update(reports)
+    .set({
+      parsed,
+      parseMethod: method,
+      parseError: error ?? null,
+      // LLM 通常能抓到 regex 抓不到的日期與標題
+      reportDate: parsed.reportDate ?? row.reportDate,
+      title: parsed.title ?? row.title,
+      jobId: parsed.jobId ?? row.jobId,
+    })
+    .where(eq(reports.id, id))
+
+  console.log(`[v0] 報告 ${id} 已用 ${method} 重新抽取（setup=${parsed.setups.length}）`)
 }
 
 export async function getLatestReport(): Promise<StoredReport | null> {

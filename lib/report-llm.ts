@@ -200,12 +200,19 @@ export type ExtractResult = {
  * 用 LLM 抽取報告結構；失敗時退回 regex 解析器，
  * 確保 webhook 不會因為 AI Gateway 出問題就整份收不到。
  */
-export async function extractReport(text: string): Promise<ExtractResult> {
+export async function extractReport(
+  text: string,
+  opts: { model?: string; timeoutMs?: number } = {},
+): Promise<ExtractResult> {
   try {
     const { output } = await generateText({
-      model: MODEL,
+      model: opts.model ?? MODEL,
       system: SYSTEM_PROMPT,
       prompt: `以下是今日的 Hermes 掃描報告原文，請抽取成結構化資料：\n\n${text}`,
+      // 抽取是機械性工作，不需要深度推理；低推理可省下大量延遲
+      reasoning: "low",
+      // 沒有超時的話，gateway 卡住會讓 webhook 無限期掛住
+      abortSignal: AbortSignal.timeout(opts.timeoutMs ?? 45_000),
       output: Output.object({
         name: "HermesReport",
         description: "Hermes Agent 每日股票動能掃描報告的結構化內容",

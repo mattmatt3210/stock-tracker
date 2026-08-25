@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto"
+import { waitUntil } from "@vercel/functions"
 import { NextResponse } from "next/server"
-import { listReports, ReportValidationError, saveReport } from "@/lib/reports"
+import { listReports, refineReport, ReportValidationError, saveReport } from "@/lib/reports"
 
 export const dynamic = "force-dynamic"
 
@@ -64,18 +65,25 @@ export async function POST(request: Request) {
 
   try {
     const { report, duplicate } = await saveReport(text, "webhook")
+
+    // LLM 抽取約需 30 秒，放到背景做，讓 Hermes 立刻收到 200
+    // （重送的報告已經解析過，不用再跑一次）
+    if (!duplicate) {
+      waitUntil(
+        refineReport(report.id).catch((e) => {
+          console.log("[v0] 背景精修失敗:", e)
+        }),
+      )
+    }
+
     return NextResponse.json({
       ok: true,
       duplicate,
       unprotected: !secret || undefined,
       id: report.id,
       reportDate: report.reportDate,
-      parsed: {
-        setups: report.parsed.setups.length,
-        positions: report.parsed.positions.length,
-        corePool: report.parsed.corePool.length,
-        extendedPool: report.parsed.extendedPool.length,
-      },
+      // pending 表示已收下，LLM 結果稍後補上
+      parseMethod: duplicate ? report.parseMethod : "pending",
     })
   } catch (error) {
     if (error instanceof ReportValidationError) {
