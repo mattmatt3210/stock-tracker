@@ -1,7 +1,19 @@
+import { timingSafeEqual } from "node:crypto"
 import { NextResponse } from "next/server"
 import { listReports, ReportValidationError, saveReport } from "@/lib/reports"
 
 export const dynamic = "force-dynamic"
+
+/**
+ * 定時安全比對，避免用 !== 逐字元短路而洩漏密鑰長度以外的資訊。
+ * timingSafeEqual 要求兩邊長度相同，否則會丟錯，所以先比長度。
+ */
+function secretMatches(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
 
 /**
  * Hermes Agent 每次跑完把報告 POST 過來。
@@ -18,12 +30,13 @@ export async function POST(request: Request) {
   const secret = process.env.REPORT_WEBHOOK_SECRET
 
   if (secret) {
-    const provided =
+    const provided = (
       request.headers.get("x-webhook-secret") ??
       request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
       ""
+    ).trim()
 
-    if (provided !== secret) {
+    if (!secretMatches(provided, secret.trim())) {
       return NextResponse.json({ ok: false, error: "密鑰不符" }, { status: 401 })
     }
   }
