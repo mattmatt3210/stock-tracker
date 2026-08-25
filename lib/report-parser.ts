@@ -53,18 +53,34 @@ function pct(s: string | undefined | null): number | null {
  * 報告代碼轉 Yahoo Finance 代碼。
  * US.NVDA  -> NVDA
  * HK.01888 -> 1888.HK   （Yahoo 港股用 4 位補零）
+ * 01888    -> 1888.HK   （Hermes 有時省略 HK. 前綴）
+ * NVDA     -> NVDA
  */
 export function toYahooSymbol(rawTicker: string): string | null {
-  const t = clean(rawTicker).toUpperCase()
+  const t = clean(rawTicker).toUpperCase().replace(/[:：,，]$/, "")
+
   const us = t.match(/^US\.([A-Z0-9.\-]+)$/)
   if (us) return us[1]
+
   const hk = t.match(/^HK\.(\d+)$/)
   if (hk) {
     const digits = hk[1].replace(/^0+/, "") || "0"
     return `${digits.padStart(4, "0")}.HK`
   }
-  // 已經是純美股代碼
-  if (/^[A-Z]{1,6}$/.test(t)) return t
+
+  // 已經是 Yahoo 港股格式
+  if (/^\d{4,5}\.HK$/.test(t)) return t
+
+  // 純數字代碼視為港股（Hermes 常省略 HK. 前綴，例如 01888）
+  const bareDigits = t.match(/^(\d{3,5})$/)
+  if (bareDigits) {
+    const digits = bareDigits[1].replace(/^0+/, "") || "0"
+    return `${digits.padStart(4, "0")}.HK`
+  }
+
+  // 純美股代碼（含 BRK.B 這類帶點的）
+  if (/^[A-Z]{1,6}(\.[A-Z])?$/.test(t)) return t
+
   return null
 }
 
