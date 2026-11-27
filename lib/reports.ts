@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { desc, eq } from "drizzle-orm"
+import { and, desc, eq, lt, notInArray } from "drizzle-orm"
 import { db } from "./db"
 import { reports, type ReportRow } from "./db/schema"
 import { parseReport, validateReport } from "./report-parser"
@@ -54,6 +54,33 @@ export interface ReportSummary {
   verdict: string | null
 }
 
+/** 報告保留天數，超過的舊報告會在新報告入庫時刪除 */
+export const RETENTION_DAYS = 30
+
+/**
+ * 刪除超過保留期限的報告（以報告日期計）。
+ * 永遠保留 keepId（剛入庫那筆）與資料庫裡最新的一筆，
+ * 這樣即使 Hermes 停推很久，看板也不會被清空。
+ */
+export async function pruneOldReports(keepId: number): Promise<number> {
+  const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10)
+
+  const latest = await getLatestReport()
+  const protectedIds = [keepId, ...(latest ? [latest.id] : [])]
+
+  const deleted = await db
+    .delete(reports)
+    .where(and(lt(reports.reportDate, cutoff), notInArray(reports.id, protectedIds)))
+    .returning({ id: reports.id })
+
+  if (deleted.length > 0) {
+    console.log(`[v0] 已清理 ${deleted.length} 份超過 ${RETENTION_DAYS} 天的舊報告`)
+  }
+  return deleted.length
+}
+
 export async function saveReport(
   rawText: string,
   source: "webhook" | "manual",
@@ -88,6 +115,10 @@ export async function saveReport(
     .returning()
 
   if (inserted.length > 0) {
+    // 清理失敗不該讓入庫失敗：報告已存好，舊資料下次寫入時再清
+    await pruneOldReports(inserted[0].id).catch((error) => {
+      console.log("[v0] 清理舊報告失敗:", error)
+    })
     return { report: toStored(inserted[0]), duplicate: false }
   }
 
